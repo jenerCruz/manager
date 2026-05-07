@@ -12,86 +12,142 @@ on:
           - list
           - delete
       repo_name:
-        description: 'Nombre del repositorio a eliminar (solo para delete)'
+        description: 'Nombre exacto del repositorio a eliminar (usa la lista de abajo)'
         required: false
         type: string
       confirm_deletion:
-        description: 'Escribe SI_ELIMINAR para confirmar la eliminación'
+        description: 'Escribe SI_ELIMINAR para confirmar eliminación permanente'
         required: false
         type: string
 
 jobs:
   list-repos:
-    name: Listar Repositorios
+    name: 📋 Listar Repositorios
     runs-on: ubuntu-latest
     if: github.event.inputs.action == 'list'
     steps:
-      - name: 📋 Listar todos los repositorios
+      - name: 🔍 Obtener lista de repositorios
         run: |
-          echo "🔍 Obteniendo lista de repositorios..."
+          echo "════════════════════════════════════════════════════"
+          echo "📦 TUS REPOSITORIOS DISPONIBLES"
+          echo "════════════════════════════════════════════════════"
+          echo ""
+          
           curl -s -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
             -H "Accept: application/vnd.github.v3+json" \
-            "https://api.github.com/user/repos?per_page=100" | \
-            jq -r '.[] | "📦 \(.name) - \(.description // "Sin descripción") - \(.visibility)"' | \
-            nl
+            "https://api.github.com/user/repos?per_page=100&sort=updated" | \
+            jq -r '.[] | "\(.name)"' | nl -v 1 -w 2 -s ". " | \
+            awk '{printf "  🔹 %-50s\n", $0}'
+          
           echo ""
-          echo "✅ Listado completado"
+          echo "════════════════════════════════════════════════════"
+          echo "✅ COPIA EL NOMBRE EXACTO DEL REPO QUE DESEAS ELIMINAR"
+          echo "════════════════════════════════════════════════════"
+          echo ""
+          echo "📝 Pasos para eliminar:"
+          echo "  1. Copia el nombre exacto del repositorio"
+          echo "  2. Ve a Actions > Run workflow"
+          echo "  3. Selecciona action: delete"
+          echo "  4. Pega el nombre en repo_name"
+          echo "  5. Escribe SI_ELIMINAR en confirm_deletion"
+          echo ""
 
   delete-repo:
-    name: Eliminar Repositorio
+    name: 🗑️ Eliminar Repositorio
     runs-on: ubuntu-latest
     if: github.event.inputs.action == 'delete'
     steps:
-      - name: ✅ Validar confirmación
-        run: |
-          if [ "${{ github.event.inputs.confirm_deletion }}" != "SI_ELIMINAR" ]; then
-            echo "❌ ERROR: Confirmación incorrecta"
-            echo "Debes escribir 'SI_ELIMINAR' para confirmar la eliminación"
-            exit 1
-          fi
-          echo "✅ Confirmación válida"
-
-      - name: 🔍 Verificar que el repositorio existe
-        id: check-repo
+      - name: ✔️ Validar inputs
+        id: validate
         run: |
           REPO_NAME="${{ github.event.inputs.repo_name }}"
+          CONFIRM="${{ github.event.inputs.confirm_deletion }}"
+          
           if [ -z "$REPO_NAME" ]; then
             echo "❌ ERROR: Debes especificar el nombre del repositorio"
             exit 1
           fi
-          echo "Verificando repositorio: $REPO_NAME"
-          RESPONSE=$(curl -s -w "\n%{http_code}" -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
+          
+          if [ "$CONFIRM" != "SI_ELIMINAR" ]; then
+            echo "❌ ERROR: Confirmación incorrecta"
+            echo "Debes escribir exactamente: SI_ELIMINAR"
+            exit 1
+          fi
+          
+          echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
+          echo "✅ Validación completada"
+
+      - name: 🔍 Verificar existencia del repositorio
+        id: check-repo
+        run: |
+          REPO_NAME="${{ steps.validate.outputs.repo_name }}"
+          
+          echo "🔎 Buscando repositorio: $REPO_NAME"
+          echo ""
+          
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
             -H "Accept: application/vnd.github.v3+json" \
             "https://api.github.com/repos/${{ github.actor }}/$REPO_NAME")
+          
           HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -n -1)
+          
           if [ "$HTTP_CODE" = "200" ]; then
-            echo "✅ Repositorio encontrado"
+            DESCRIPTION=$(echo "$BODY" | jq -r '.description // "Sin descripción"')
+            VISIBILITY=$(echo "$BODY" | jq -r '.visibility')
+            echo "✅ Repositorio encontrado:"
+            echo "   Nombre: $REPO_NAME"
+            echo "   Descripción: $DESCRIPTION"
+            echo "   Privacidad: $VISIBILITY"
+            echo ""
           else
             echo "❌ ERROR: Repositorio no encontrado (HTTP $HTTP_CODE)"
             exit 1
           fi
 
-      - name: 🗑️ Eliminar repositorio
+      - name: ⚠️ Confirmación final
         run: |
-          REPO_NAME="${{ github.event.inputs.repo_name }}"
-          echo "⚠️ Eliminando repositorio: $REPO_NAME"
+          REPO_NAME="${{ steps.validate.outputs.repo_name }}"
+          echo "════════════════════════════════════════════════════"
+          echo "⚠️  CONFIRMACIÓN FINAL DE ELIMINACIÓN"
+          echo "════════════════════════════════════════════════════"
+          echo ""
+          echo "Repositorio a eliminar: $REPO_NAME"
+          echo "Estado: CONFIRMADO"
+          echo ""
+          echo "⚠️  ADVERTENCIA:"
+          echo "   - Esta acción es IRREVERSIBLE"
+          echo "   - Se eliminarán todos los datos del repositorio"
+          echo "   - No se puede recuperar después"
+          echo ""
+          echo "Procediendo con la eliminación en 3 segundos..."
+          echo ""
+          sleep 3
+
+      - name: 🗑️ Ejecutar eliminación
+        run: |
+          REPO_NAME="${{ steps.validate.outputs.repo_name }}"
+          
+          echo "🗑️  Eliminando repositorio: $REPO_NAME"
+          
           RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE \
             -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
             -H "Accept: application/vnd.github.v3+json" \
             "https://api.github.com/repos/${{ github.actor }}/$REPO_NAME")
+          
           HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          
           if [ "$HTTP_CODE" = "204" ]; then
-            echo "✅ Repositorio eliminado exitosamente: $REPO_NAME"
+            echo ""
+            echo "════════════════════════════════════════════════════"
+            echo "✅ REPOSITORIO ELIMINADO EXITOSAMENTE"
+            echo "════════════════════════════════════════════════════"
+            echo "Nombre: $REPO_NAME"
+            echo "Hora: $(date)"
+            echo "═════════════════════════════════════════════════════"
+            echo ""
           else
-            echo "❌ ERROR: No se pudo eliminar el repositorio (HTTP $HTTP_CODE)"
+            echo "❌ ERROR: No se pudo eliminar (HTTP $HTTP_CODE)"
             exit 1
           fi
-
-      - name: 📝 Resumen
-        run: |
-          echo "═══════════════════════════════════════"
-          echo "✅ OPERACIÓN COMPLETADA"
-          echo "═══════════════════════════════════════"
-          echo "Repositorio eliminado: ${{ github.event.inputs.repo_name }}"
-          echo "Hora: $(date)"
-          echo "═══════════════════════════════════════"
